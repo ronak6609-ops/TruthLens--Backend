@@ -19,14 +19,24 @@ def _load():
 
 def detect_image(image_bytes: bytes) -> dict:
     _load()
+
+    # Efficient decode: resize early to reduce tensor size
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+
+    # Resize to model's expected input size (224x224) before processing
+    # to avoid unnecessarily large intermediate tensors
+    image = image.resize((224, 224), Image.BILINEAR)
+
     inputs = _processor(images=image, return_tensors="pt")
+
     with torch.no_grad():
         outputs = _model(**inputs)
+
     probs = torch.softmax(outputs.logits, dim=-1)[0]
     id2label = _model.config.id2label
     scores = {id2label[i]: probs[i].item() for i in range(len(probs))}
     print("Image model scores:", scores)
+
     fake_score = 0.0
     real_score = 0.0
     for label, score in scores.items():
@@ -35,13 +45,16 @@ def detect_image(image_bytes: bytes) -> dict:
             fake_score = max(fake_score, score)
         elif any(x in l for x in ['real', 'human', 'natural']):
             real_score = max(real_score, score)
+
     if fake_score == 0.0 and real_score == 0.0:
         vals = list(scores.values())
         fake_score = vals[-1]
         real_score = vals[0]
+
     is_ai = fake_score > real_score
     confidence = max(fake_score, real_score)
     print(f"Image result: fake={fake_score:.3f} real={real_score:.3f} → {'AI' if is_ai else 'REAL'}")
+
     return {
         "is_ai_generated": is_ai,
         "confidence": round(confidence * 100, 2),

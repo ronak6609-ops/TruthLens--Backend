@@ -3,8 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import os
 
-# ✅ NO model imports at top level — lazy loaded inside each route
-
 app = FastAPI(
     title="TruthLens API",
     description="AI authenticity detection for images, video, audio, and news.",
@@ -27,6 +25,27 @@ MAX_VIDEO_SIZE = 200 * 1024 * 1024
 MAX_AUDIO_SIZE = 50 * 1024 * 1024
 
 
+# ── Startup: preload image + news models only ──────────────────────────────────
+@app.on_event("startup")
+async def startup_preload():
+    print("🚀 TruthLens API starting — preloading image and news models...")
+    try:
+        from detector import _load as load_image
+        load_image()
+        print("✅ Image model preloaded.")
+    except Exception as e:
+        print(f"⚠️  Image model preload failed: {e}")
+    try:
+        from news_detector import _load as load_news
+        load_news()
+        print("✅ News model preloaded.")
+    except Exception as e:
+        print(f"⚠️  News model preload failed: {e}")
+    print("✅ Startup complete. Audio and video models will lazy-load on first request.")
+
+
+# ── Health ─────────────────────────────────────────────────────────────────────
+
 @app.get("/")
 def root():
     return {"status": "ok", "service": "TruthLens API", "version": "1.2.0"}
@@ -41,7 +60,7 @@ def health():
 
 @app.post("/detect/image")
 async def detect_img(file: UploadFile = File(...)):
-    from detector import detect_image  # lazy import
+    from detector import detect_image
     contents = await file.read()
     if len(contents) > MAX_IMAGE_SIZE:
         raise HTTPException(status_code=413, detail="Image exceeds 20 MB limit.")
@@ -59,7 +78,7 @@ async def detect_img(file: UploadFile = File(...)):
 
 @app.post("/detect/video")
 async def detect_vid(file: UploadFile = File(...)):
-    from video_detector import detect_video  # lazy import
+    from video_detector import detect_video
     contents = await file.read()
     if len(contents) > MAX_VIDEO_SIZE:
         raise HTTPException(status_code=413, detail="Video exceeds 200 MB limit.")
@@ -74,7 +93,7 @@ async def detect_vid(file: UploadFile = File(...)):
 
 @app.post("/detect/audio")
 async def detect_aud(file: UploadFile = File(...)):
-    from audio_detector import detect_audio  # lazy import
+    from audio_detector import detect_audio
     contents = await file.read()
     if len(contents) > MAX_AUDIO_SIZE:
         raise HTTPException(status_code=413, detail="Audio exceeds 50 MB limit.")
@@ -89,7 +108,7 @@ async def detect_aud(file: UploadFile = File(...)):
 
 @app.post("/detect/news")
 async def detect_news_ep(text: str = Form(...)):
-    from news_detector import detect_news  # lazy import
+    from news_detector import detect_news
     if not text or len(text.strip()) < 20:
         raise HTTPException(status_code=422, detail="Text must be at least 20 characters.")
     try:
