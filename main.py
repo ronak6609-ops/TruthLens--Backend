@@ -3,10 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import os
 
-from detector import detect_image
-from video_detector import detect_video
-from news_detector import detect_news
-from audio_detector import detect_audio
+# ✅ NO model imports at top level — lazy loaded inside each route
 
 app = FastAPI(
     title="TruthLens API",
@@ -14,8 +11,6 @@ app = FastAPI(
     version="1.2.0",
 )
 
-# Allow all origins for development. In production, restrict to your frontend domain.
-# Example: allow_origins=["https://your-frontend.com"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -27,9 +22,9 @@ app.add_middleware(
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
 ALLOWED_VIDEO_TYPES = {"video/mp4", "video/quicktime", "video/x-msvideo", "video/x-matroska", "video/webm"}
 ALLOWED_AUDIO_TYPES = {"audio/mpeg", "audio/wav", "audio/x-wav", "audio/mp4", "audio/ogg", "audio/flac", "audio/x-m4a"}
-MAX_IMAGE_SIZE = 20 * 1024 * 1024   # 20 MB
-MAX_VIDEO_SIZE = 200 * 1024 * 1024  # 200 MB
-MAX_AUDIO_SIZE = 50 * 1024 * 1024   # 50 MB
+MAX_IMAGE_SIZE = 20 * 1024 * 1024
+MAX_VIDEO_SIZE = 200 * 1024 * 1024
+MAX_AUDIO_SIZE = 50 * 1024 * 1024
 
 
 @app.get("/")
@@ -46,6 +41,7 @@ def health():
 
 @app.post("/detect/image")
 async def detect_img(file: UploadFile = File(...)):
+    from detector import detect_image  # lazy import
     contents = await file.read()
     if len(contents) > MAX_IMAGE_SIZE:
         raise HTTPException(status_code=413, detail="Image exceeds 20 MB limit.")
@@ -63,6 +59,7 @@ async def detect_img(file: UploadFile = File(...)):
 
 @app.post("/detect/video")
 async def detect_vid(file: UploadFile = File(...)):
+    from video_detector import detect_video  # lazy import
     contents = await file.read()
     if len(contents) > MAX_VIDEO_SIZE:
         raise HTTPException(status_code=413, detail="Video exceeds 200 MB limit.")
@@ -77,6 +74,7 @@ async def detect_vid(file: UploadFile = File(...)):
 
 @app.post("/detect/audio")
 async def detect_aud(file: UploadFile = File(...)):
+    from audio_detector import detect_audio  # lazy import
     contents = await file.read()
     if len(contents) > MAX_AUDIO_SIZE:
         raise HTTPException(status_code=413, detail="Audio exceeds 50 MB limit.")
@@ -91,6 +89,7 @@ async def detect_aud(file: UploadFile = File(...)):
 
 @app.post("/detect/news")
 async def detect_news_ep(text: str = Form(...)):
+    from news_detector import detect_news  # lazy import
     if not text or len(text.strip()) < 20:
         raise HTTPException(status_code=422, detail="Text must be at least 20 characters.")
     try:
@@ -100,9 +99,7 @@ async def detect_news_ep(text: str = Form(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ── VERSIONED ALIASES (for Flutter / future API clients) ──────────────────────
-# These mirror the routes above under /v1/ so the Flutter app and web
-# can share the same base URL and just switch prefix if needed.
+# ── VERSIONED ALIASES ─────────────────────────────────────────────────────────
 
 @app.post("/v1/detect/image")
 async def v1_detect_img(file: UploadFile = File(...)):

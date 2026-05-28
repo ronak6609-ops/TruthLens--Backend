@@ -2,36 +2,28 @@ import numpy as np
 import tempfile
 import os
 
-print("Loading audio detection model... please wait")
+# ── Lazy loading ─────────────────────────────────────────────────
+_audio_model = None
 
-try:
-    import librosa
-    LIBROSA_AVAILABLE = True
-    print("✅ librosa available")
-except ImportError:
-    LIBROSA_AVAILABLE = False
-    print("⚠️ librosa not installed — acoustic analysis disabled")
-
-try:
-    from transformers import pipeline
-    audio_model = pipeline("audio-classification", model="MelodyMachine/Deepfake-audio-detection-V2")
-    MODEL_AVAILABLE = True
-    print("✅ Audio model loaded!")
-except Exception as e:
-    MODEL_AVAILABLE = False
-    print(f"⚠️ Audio model failed: {e}")
-
+def _load():
+    global _audio_model
+    if _audio_model is None:
+        print("Loading audio detection model... (first request)")
+        from transformers import pipeline
+        _audio_model = pipeline(
+            "audio-classification",
+            model="MelodyMachine/Deepfake-audio-detection-V2"
+        )
+        print("✅ Audio model loaded!")
 
 def extract_acoustic_features(audio_path: str) -> dict:
-    if not LIBROSA_AVAILABLE:
-        return {"acoustic_ai_score": 0.0, "duration": 0.0, "pitch_variance": 0.0, "ai_hints": 0}
     try:
+        import librosa
         y, sr = librosa.load(audio_path, sr=16000, duration=30)
-        mfccs     = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
-        mfcc_std  = float(np.std(mfccs))
-        zcr_std   = float(np.std(librosa.feature.zero_crossing_rate(y)))
-        rms_std   = float(np.std(librosa.feature.rms(y=y)))
-        duration  = float(librosa.get_duration(y=y, sr=sr))
+        mfcc_std = float(np.std(librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)))
+        zcr_std  = float(np.std(librosa.feature.zero_crossing_rate(y)))
+        rms_std  = float(np.std(librosa.feature.rms(y=y)))
+        duration = float(librosa.get_duration(y=y, sr=sr))
         try:
             f0, vf, _ = librosa.pyin(y, fmin=librosa.note_to_hz('C2'), fmax=librosa.note_to_hz('C7'))
             f0v = f0[vf] if vf is not None else np.array([])
@@ -46,8 +38,8 @@ def extract_acoustic_features(audio_path: str) -> dict:
         print(f"Acoustic analysis error: {e}")
         return {"acoustic_ai_score": 0.0, "duration": 0.0, "pitch_variance": 0.0, "ai_hints": 0}
 
-
 def detect_audio(audio_bytes: bytes, filename: str = "audio.wav") -> dict:
+    _load()
     ext = os.path.splitext(filename)[1].lower() or ".wav"
     with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
         tmp.write(audio_bytes)
@@ -55,37 +47,30 @@ def detect_audio(audio_bytes: bytes, filename: str = "audio.wav") -> dict:
     try:
         fake_score = 0.0
         real_score = 0.0
-
-        if MODEL_AVAILABLE:
-            try:
-                results = audio_model(tmp_path)
-                print("Audio model output:", results)
-                for r in results:
-                    label = r['label'].lower()
-                    if any(x in label for x in ['fake','spoof','synthetic','ai','deepfake']):
-                        fake_score = max(fake_score, r['score'])
-                    elif any(x in label for x in ['real','genuine','human','bonafide']):
-                        real_score = max(real_score, r['score'])
-                if fake_score == 0.0 and real_score == 0.0:
-                    vals = sorted(results, key=lambda x: x['score'], reverse=True)
-                    fake_score = vals[0]['score']
-                    real_score = 1.0 - fake_score
-            except Exception as e:
-                print(f"Model inference error: {e}")
-                fake_score = 0.5
-                real_score = 0.5
-
+        try:
+            results = _audio_model(tmp_path)
+            print("Audio model output:", results)
+            for r in results:
+                label = r['label'].lower()
+                if any(x in label for x in ['fake','spoof','synthetic','ai','deepfake']):
+                    fake_score = max(fake_score, r['score'])
+                elif any(x in label for x in ['real','genuine','human','bonafide']):
+                    real_score = max(real_score, r['score'])
+            if fake_score == 0.0 and real_score == 0.0:
+                vals = sorted(results, key=lambda x: x['score'], reverse=True)
+                fake_score = vals[0]['score']
+                real_score = 1.0 - fake_score
+        except Exception as e:
+            print(f"Audio model error: {e}")
+            fake_score = 0.5
+            real_score = 0.5
         features = extract_acoustic_features(tmp_path)
         acoustic  = features["acoustic_ai_score"]
-        final     = (fake_score * 0.70) + (acoustic * 0.30) if MODEL_AVAILABLE else acoustic
+        final     = (fake_score * 0.70) + (acoustic * 0.30)
         is_fake   = final > 0.50
-
         print(f"Audio result: model={fake_score:.2f} acoustic={acoustic:.2f} final={final:.2f} → {'FAKE' if is_fake else 'REAL'}")
-
         return {
-            "success": True,
-            "is_fake": is_fake,
-            "is_ai_generated": is_fake,
+            "success": True, "is_fake": is_fake, "is_ai_generated": is_fake,
             "confidence": round(final * 100, 2),
             "label": "AI / Deepfake Audio" if is_fake else "Real Human Voice",
             "fake_score": round(final * 100, 2),
@@ -103,7 +88,5 @@ def detect_audio(audio_bytes: bytes, filename: str = "audio.wav") -> dict:
         return {"success": False, "error": str(e), "is_fake": False,
                 "confidence": 0, "label": "Error", "fake_score": 0, "real_score": 0}
     finally:
-        try:
-            os.unlink(tmp_path)
-        except Exception:
-            pass
+        try: os.unlink(tmp_path)
+        except: pass
